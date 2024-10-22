@@ -19,7 +19,10 @@ import openwakeword
 from openwakeword.data import generate_adversarial_texts, augment_clips, mmap_batch_generator
 from openwakeword.utils import compute_features_from_generator
 from openwakeword.utils import AudioFeatures
-
+import itertools
+import wave
+from piper import PiperVoice
+import uuid
 
 # Base model class for an openwakeword model
 class Model(nn.Module):
@@ -592,6 +595,47 @@ def convert_onnx_to_tflite(onnx_model_path, output_path):
 
     return None
 
+def piper_tts(voice, text, output_filename, speaker_id=0, length_scale=1.0, noise_scale=0.667, noise_w=0.8, sentence_silence=0.0):
+    synthesize_args = {
+        "length_scale": length_scale,
+        "noise_scale": noise_scale,
+        "noise_w": noise_w,
+        "sentence_silence": sentence_silence,
+    }
+    with wave.open(output_filename, "wb") as wav_file:
+        voice.synthesize(
+            text,
+            wav_file,
+            **synthesize_args
+        )
+
+def load_voice_model(model_name):
+    model_path = Path(f"{model_name}.onnx")
+    config_path = Path(f"{model_name}.onnx.json")
+    return PiperVoice.load(model_path, config_path=config_path, use_cuda=True)
+
+def generate_samples(text, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws):
+    os.makedirs(output_dir, exist_ok=True)
+    
+    total_combinations = len(voice_models) * len(length_scales) * len(noise_scales) * len(noise_ws)
+    samples_per_config = max(1, max_samples // total_combinations)
+    
+    generated_samples = 0
+    
+    with tqdm(total=max_samples, desc="Generating samples", unit="file") as pbar:
+        for voice_model in voice_models:
+            voice = load_voice_model(voice_model)
+            
+            for length_scale, noise_scale, noise_w in itertools.product(length_scales, noise_scales, noise_ws):
+                for _ in range(samples_per_config):
+                    if generated_samples >= max_samples:
+                        return
+                    
+                    output_filename = os.path.join(output_dir, f"{uuid.uuid4().hex}.wav")
+                    piper_tts(voice, text, output_filename, length_scale=length_scale, noise_scale=noise_scale, noise_w=noise_w)
+                    
+                    generated_samples += 1
+                    pbar.update(1)
 
 if __name__ == '__main__':
     # Get training config file
@@ -630,13 +674,21 @@ if __name__ == '__main__':
         default="False",
         required=False
     )
+    voice_models = [
+        "tr_TR-dfki-medium",
+        'tr_TR-fettah-medium',
+        'tr_TR-fahrettin-medium',
+    ]
+    length_scales = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
+    noise_scales = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
+    noise_ws = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
 
     args = parser.parse_args()
     config = yaml.load(open(args.training_config, 'r').read(), yaml.Loader)
 
-    # imports Piper for synthetic sample generation
-    sys.path.insert(0, os.path.abspath(config["piper_sample_generator_path"]))
-    from generate_samples import generate_samples
+    # # imports Piper for synthetic sample generation
+    # sys.path.insert(0, os.path.abspath(config["piper_sample_generator_path"]))
+    # from generate_samples import generate_samples
 
     # Define output locations
     config["output_dir"] = os.path.abspath(config["output_dir"])
@@ -667,11 +719,13 @@ if __name__ == '__main__':
         n_current_samples = len(os.listdir(positive_train_output_dir))
         if n_current_samples <= 0.95*config["n_samples"]:
             generate_samples(
-                text=config["target_phrase"], max_samples=config["n_samples"]-n_current_samples,
-                batch_size=config["tts_batch_size"],
-                noise_scales=[0.98], noise_scale_ws=[0.98], length_scales=[0.75, 1.0, 1.25],
-                output_dir=positive_train_output_dir, auto_reduce_batch_size=True,
-                file_names=[uuid.uuid4().hex + ".wav" for i in range(config["n_samples"])]
+                text=config["target_phrase"],
+                max_samples=config["n_samples"]-n_current_samples,
+                output_dir=positive_train_output_dir,
+                voice_models=voice_models,
+                length_scales=length_scales,
+                noise_scales=noise_scales,
+                noise_ws=noise_ws
             )
             torch.cuda.empty_cache()
         else:
@@ -683,10 +737,15 @@ if __name__ == '__main__':
             os.mkdir(positive_test_output_dir)
         n_current_samples = len(os.listdir(positive_test_output_dir))
         if n_current_samples <= 0.95*config["n_samples_val"]:
-            generate_samples(text=config["target_phrase"], max_samples=config["n_samples_val"]-n_current_samples,
-                             batch_size=config["tts_batch_size"],
-                             noise_scales=[1.0], noise_scale_ws=[1.0], length_scales=[0.75, 1.0, 1.25],
-                             output_dir=positive_test_output_dir, auto_reduce_batch_size=True)
+            generate_samples(
+                text=config["target_phrase"],
+                max_samples=config["n_samples_val"]-n_current_samples,
+                output_dir=positive_test_output_dir,
+                voice_models=voice_models,
+                length_scales=length_scales,
+                noise_scales=noise_scales,
+                noise_ws=noise_ws
+            )
             torch.cuda.empty_cache()
         else:
             logging.warning(f"Skipping generation of positive clips testing, as ~{config['n_samples_val']} already exist")
@@ -704,12 +763,15 @@ if __name__ == '__main__':
                     N=config["n_samples"]//len(config["target_phrase"]),
                     include_partial_phrase=1.0,
                     include_input_words=0.2))
-            generate_samples(text=adversarial_texts, max_samples=config["n_samples"]-n_current_samples,
-                             batch_size=config["tts_batch_size"]//7,
-                             noise_scales=[0.98], noise_scale_ws=[0.98], length_scales=[0.75, 1.0, 1.25],
-                             output_dir=negative_train_output_dir, auto_reduce_batch_size=True,
-                             file_names=[uuid.uuid4().hex + ".wav" for i in range(config["n_samples"])]
-                             )
+            generate_samples(
+                text=adversarial_texts,
+                max_samples=config["n_samples"]-n_current_samples,
+                output_dir=negative_train_output_dir,
+                voice_models=voice_models,
+                length_scales=length_scales,
+                noise_scales=noise_scales,
+                noise_ws=noise_ws
+            )
             torch.cuda.empty_cache()
         else:
             logging.warning(f"Skipping generation of negative clips for training, as ~{config['n_samples']} already exist")
@@ -727,10 +789,15 @@ if __name__ == '__main__':
                     N=config["n_samples_val"]//len(config["target_phrase"]),
                     include_partial_phrase=1.0,
                     include_input_words=0.2))
-            generate_samples(text=adversarial_texts, max_samples=config["n_samples_val"]-n_current_samples,
-                             batch_size=config["tts_batch_size"]//7,
-                             noise_scales=[1.0], noise_scale_ws=[1.0], length_scales=[0.75, 1.0, 1.25],
-                             output_dir=negative_test_output_dir, auto_reduce_batch_size=True)
+            generate_samples(
+                text=adversarial_texts,
+                max_samples=config["n_samples_val"]-n_current_samples,
+                output_dir=negative_test_output_dir,
+                voice_models=voice_models,
+                length_scales=length_scales,
+                noise_scales=noise_scales,
+                noise_ws=noise_ws
+            )
             torch.cuda.empty_cache()
         else:
             logging.warning(f"Skipping generation of negative clips for testing, as ~{config['n_samples_val']} already exist")

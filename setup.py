@@ -34,6 +34,8 @@ setuptools.setup(
         'scipy>=1.3,<2',
         'scikit-learn>=1,<2',
         'requests>=2.0,<3',
+        'piper-tts',
+        'onnxruntime-gpu'
     ],
     extras_require={
         'test': [
