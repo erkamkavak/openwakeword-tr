@@ -785,7 +785,7 @@ if __name__ == '__main__':
         n_current_samples = len(os.listdir(positive_train_output_dir))
         if n_current_samples <= 0.95*config["n_samples"]:
             generate_samples(
-                text=config["target_phrase"],
+                texts=config["target_phrase"],
                 max_samples=config["n_samples"]-n_current_samples,
                 output_dir=positive_train_output_dir,
                 voice_models=voice_models,
@@ -807,7 +807,7 @@ if __name__ == '__main__':
         n_current_samples = len(os.listdir(positive_test_output_dir))
         if n_current_samples <= 0.95*config["n_samples_val"]:
             generate_samples(
-                text=config["target_phrase"],
+                texts=config["target_phrase"],
                 max_samples=config["n_samples_val"]-n_current_samples,
                 output_dir=positive_test_output_dir,
                 voice_models=voice_models,
@@ -836,7 +836,7 @@ if __name__ == '__main__':
                     include_partial_phrase=1.0,
                     include_input_words=0.2))
             generate_samples(
-                text=adversarial_texts,
+                texts=adversarial_texts,
                 max_samples=config["n_samples"]-n_current_samples,
                 output_dir=negative_train_output_dir,
                 voice_models=voice_models,
@@ -865,7 +865,7 @@ if __name__ == '__main__':
                     include_partial_phrase=1.0,
                     include_input_words=0.2))
             generate_samples(
-                text=adversarial_texts,
+                texts=adversarial_texts,
                 max_samples=config["n_samples_val"]-n_current_samples,
                 output_dir=negative_test_output_dir,
                 voice_models=voice_models,
