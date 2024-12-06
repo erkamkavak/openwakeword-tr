@@ -657,7 +657,7 @@ def piper_generate_samples(texts, max_samples, output_dir, voice_models, length_
                         return
                     
                     output_filename = os.path.join(output_dir, f"{uuid.uuid4().hex}.wav")
-                    piper_tts(voice, texts[generate_samples % len(texts)], output_filename, length_scale=length_scale, noise_scale=noise_scale, noise_w=noise_w)
+                    piper_tts(voice, texts[generated_samples % len(texts)], output_filename, length_scale=length_scale, noise_scale=noise_scale, noise_w=noise_w)
                     
                     generated_samples += 1
                     pbar.update(1)
