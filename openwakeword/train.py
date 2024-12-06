@@ -90,6 +90,8 @@ class Model(nn.Module):
             class Net(nn.Module):
                 def __init__(self, input_shape, n_classes=1):
                     super().__init__()
+
+                    # Define model
                     self.layer1 = nn.LSTM(input_shape[-1], 64, num_layers=2, bidirectional=True,
                                           batch_first=True, dropout=0.0)
                     self.layer2 = nn.Linear(64*2, n_classes)
@@ -694,6 +696,41 @@ def generate_samples(texts, max_samples, output_dir, voice_models, openai_models
         # check if text is a string or a list of strings
         piper_generate_samples(texts, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws)
 
+def validate_and_convert_audio(input_file, output_file=None):
+    """
+    Validates audio file and converts it to proper WAV format if needed.
+    Returns True if file is valid, False otherwise.
+    """
+    try:
+        # Try reading the file
+        sr, data = scipy.io.wavfile.read(input_file)
+        return True
+    except Exception as e:
+        if output_file is None:
+            output_file = input_file
+        try:
+            # Try converting using scipy
+            import soundfile as sf
+            data, sr = sf.read(input_file)
+            sf.write(output_file, data, sr, format='WAV')
+            return True
+        except Exception as e:
+            print(f"Error processing file {input_file}: {str(e)}")
+            return False
+
+def validate_dataset(directory):
+    """
+    Validates all audio files in a directory and converts them if needed.
+    Returns list of valid files.
+    """
+    valid_files = []
+    for file in os.listdir(directory):
+        if file.endswith('.wav'):
+            full_path = os.path.join(directory, file)
+            if validate_and_convert_audio(full_path):
+                valid_files.append(full_path)
+    return valid_files
+
 if __name__ == '__main__':
     # Get training config file
     parser = argparse.ArgumentParser()
@@ -879,6 +916,18 @@ if __name__ == '__main__':
             torch.cuda.empty_cache()
         else:
             logging.warning(f"Skipping generation of negative clips for testing, as ~{config['n_samples_val']} already exist")
+
+    # Validate positive clips
+    positive_clips = validate_dataset(positive_train_output_dir)
+    validate_dataset(positive_test_output_dir)
+    if len(positive_clips) == 0:
+        raise ValueError(f"No valid audio files found in {positive_train_output_dir}")
+
+    # Validate negative clips
+    negative_clips = validate_dataset(negative_train_output_dir)
+    validate_dataset(negative_test_output_dir)
+    if len(negative_clips) == 0:
+        raise ValueError(f"No valid audio files found in {negative_train_output_dir}")
 
     # Set the total length of the training clips based on the ~median generated clip duration, rounding to the nearest 1000 samples
     # and setting to 32000 when the median + 750 ms is close to that, as it's a good default value
