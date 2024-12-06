@@ -688,7 +688,12 @@ def generate_samples(text, max_samples, output_dir, voice_models, openai_models,
         piper_generate_samples(text, piper_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws)
         openai_generate_samples(text, openai_samples, output_dir, openai_models, speed_scales)
     else:
-        piper_generate_samples(text, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws)
+        # check if text is a string or a list of strings
+        if isinstance(text, str):
+            text = [text]
+        sample_per_text = max_samples // len(text)
+        for t in text:
+            piper_generate_samples(t, sample_per_text, output_dir, voice_models, length_scales, noise_scales, noise_ws)
 
 if __name__ == '__main__':
     # Get training config file
@@ -781,7 +786,7 @@ if __name__ == '__main__':
         n_current_samples = len(os.listdir(positive_train_output_dir))
         if n_current_samples <= 0.95*config["n_samples"]:
             generate_samples(
-                text=config["target_phrase"][0],
+                text=config["target_phrase"],
                 max_samples=config["n_samples"]-n_current_samples,
                 output_dir=positive_train_output_dir,
                 voice_models=voice_models,
@@ -803,7 +808,7 @@ if __name__ == '__main__':
         n_current_samples = len(os.listdir(positive_test_output_dir))
         if n_current_samples <= 0.95*config["n_samples_val"]:
             generate_samples(
-                text=config["target_phrase"][0],
+                text=config["target_phrase"],
                 max_samples=config["n_samples_val"]-n_current_samples,
                 output_dir=positive_test_output_dir,
                 voice_models=voice_models,
