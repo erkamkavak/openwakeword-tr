@@ -636,7 +636,10 @@ def load_voice_model(model_name):
     config_path = Path(f"{model_name}.onnx.json")
     return PiperVoice.load(model_path, config_path=config_path, use_cuda=True)
 
-def piper_generate_samples(text, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws):
+def piper_generate_samples(texts, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws):
+    if not isinstance(texts, list):
+        texts = [texts]
+
     os.makedirs(output_dir, exist_ok=True)
     
     total_combinations = len(voice_models) * len(length_scales) * len(noise_scales) * len(noise_ws)
@@ -654,7 +657,7 @@ def piper_generate_samples(text, max_samples, output_dir, voice_models, length_s
                         return
                     
                     output_filename = os.path.join(output_dir, f"{uuid.uuid4().hex}.wav")
-                    piper_tts(voice, text, output_filename, length_scale=length_scale, noise_scale=noise_scale, noise_w=noise_w)
+                    piper_tts(voice, texts[generate_samples % len(texts)], output_filename, length_scale=length_scale, noise_scale=noise_scale, noise_w=noise_w)
                     
                     generated_samples += 1
                     pbar.update(1)
@@ -680,20 +683,16 @@ def openai_generate_samples(text, max_samples, output_dir, openai_models, speed_
                     generated_samples += 1
                     pbar.update(1)
 
-def generate_samples(text, max_samples, output_dir, voice_models, openai_models, length_scales, noise_scales, noise_ws, speed_scales, create_positive_samples=False):
+def generate_samples(texts, max_samples, output_dir, voice_models, openai_models, length_scales, noise_scales, noise_ws, speed_scales, create_positive_samples=False):
     if create_positive_samples:
         piper_samples = max_samples * 95 // 100
         openai_samples = max_samples - piper_samples
 
-        piper_generate_samples(text, piper_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws)
-        openai_generate_samples(text, openai_samples, output_dir, openai_models, speed_scales)
+        piper_generate_samples(texts, piper_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws)
+        openai_generate_samples(texts, openai_samples, output_dir, openai_models, speed_scales)
     else:
         # check if text is a string or a list of strings
-        if isinstance(text, str):
-            text = [text]
-        sample_per_text = max_samples // len(text)
-        for t in text:
-            piper_generate_samples(t, sample_per_text, output_dir, voice_models, length_scales, noise_scales, noise_ws)
+        piper_generate_samples(texts, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws)
 
 if __name__ == '__main__':
     # Get training config file
