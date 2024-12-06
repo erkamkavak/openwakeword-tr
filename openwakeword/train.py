@@ -696,27 +696,32 @@ def generate_samples(texts, max_samples, output_dir, voice_models, openai_models
         # check if text is a string or a list of strings
         piper_generate_samples(texts, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws)
 
-def validate_and_convert_audio(input_file, output_file=None):
+def validate_and_convert_audio(input_file, output_file=None, target_sr=16000):
     """
     Validates audio file and converts it to proper WAV format if needed.
+    Also ensures the sample rate is correct (16kHz).
     Returns True if file is valid, False otherwise.
     """
     try:
-        # Try reading the file
-        sr, data = scipy.io.wavfile.read(input_file)
-        return True
-    except Exception as e:
+        import soundfile as sf
+        # Read the audio file
+        data, sr = sf.read(input_file)
+        
+        # Resample if necessary
+        if sr != target_sr:
+            import resampy
+            data = resampy.resample(data, sr, target_sr)
+            sr = target_sr
+                
+        # Save with correct format and sample rate
         if output_file is None:
             output_file = input_file
-        try:
-            # Try converting using scipy
-            import soundfile as sf
-            data, sr = sf.read(input_file)
-            sf.write(output_file, data, sr, format='WAV')
-            return True
-        except Exception as e:
-            print(f"Error processing file {input_file}: {str(e)}")
-            return False
+        sf.write(output_file, data, target_sr, format='WAV', subtype='PCM_16')
+        return True
+        
+    except Exception as e:
+        print(f"Error processing file {input_file}: {str(e)}")
+        return False
 
 def validate_dataset(directory):
     """
