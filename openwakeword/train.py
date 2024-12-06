@@ -23,6 +23,8 @@ import itertools
 import wave
 from piper import PiperVoice
 import uuid
+import openai
+
 
 # Base model class for an openwakeword model
 class Model(nn.Module):
@@ -267,6 +269,14 @@ class Model(nn.Module):
         automatically, based on validation data and performance targets provided.
         After training merges the best checkpoints and returns a single model.
         """
+
+        # Load previous model if in training mode
+        if 'model_path' in config:
+            model_path = config['model_path']
+            if os.path.exists(model_path):
+                self.model.load_state_dict(torch.load(model_path))
+            else:
+                raise FileNotFoundError(f"Model file not found at: {model_path}")
 
         # Get false positive validation data duration
         val_set_hrs = 11.3
@@ -609,12 +619,24 @@ def piper_tts(voice, text, output_filename, speaker_id=0, length_scale=1.0, nois
             **synthesize_args
         )
 
+def openai_tts(text, output_filename, speaker, speed=1.0):
+    response = openai.audio.speech.create(
+        model="tts-1",
+        voice=speaker,
+        input=text,
+        speed=speed
+    )
+
+    with open(output_filename, 'wb') as wav_file:
+        for chunk in response.iter_bytes():
+            wav_file.write(chunk)
+
 def load_voice_model(model_name):
     model_path = Path(f"{model_name}.onnx")
     config_path = Path(f"{model_name}.onnx.json")
     return PiperVoice.load(model_path, config_path=config_path, use_cuda=True)
 
-def generate_samples(text, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws):
+def piper_generate_samples(text, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws):
     os.makedirs(output_dir, exist_ok=True)
     
     total_combinations = len(voice_models) * len(length_scales) * len(noise_scales) * len(noise_ws)
@@ -636,6 +658,37 @@ def generate_samples(text, max_samples, output_dir, voice_models, length_scales,
                     
                     generated_samples += 1
                     pbar.update(1)
+
+def openai_generate_samples(text, max_samples, output_dir, openai_models, speed_scales):
+    os.makedirs(output_dir, exist_ok=True)
+
+    total_combinations = len(openai_models) * len(speed_scales)
+    samples_per_config = max(1, max_samples // total_combinations)
+
+    generated_samples = 0
+
+    with tqdm(total=max_samples, desc="Generating samples", unit="file") as pbar:
+        for speaker in openai_models:
+            for speed in speed_scales:
+                for _ in range(samples_per_config): 
+                    if generated_samples >= max_samples:
+                        return
+
+                    output_filename = os.path.join(output_dir, f"{uuid.uuid4().hex}.wav")
+                    openai_tts(text, output_filename, speaker, speed=speed)
+
+                    generated_samples += 1
+                    pbar.update(1)
+
+def generate_samples(text, max_samples, output_dir, voice_models, openai_models, length_scales, noise_scales, noise_ws, speed_scales, create_positive_samples=False):
+    if create_positive_samples:
+        piper_samples = max_samples * 95 // 100
+        openai_samples = max_samples - piper_samples
+
+        piper_generate_samples(text, piper_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws)
+        openai_generate_samples(text, openai_samples, output_dir, openai_models, speed_scales)
+    else:
+        piper_generate_samples(text, max_samples, output_dir, voice_models, length_scales, noise_scales, noise_ws)
 
 if __name__ == '__main__':
     # Get training config file
@@ -682,7 +735,16 @@ if __name__ == '__main__':
     length_scales = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
     noise_scales = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
     noise_ws = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
+    speed_scales = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
 
+    openai_models = [
+        "alloy",
+        "nova",
+        "shimmer",
+        "echo",
+        "fable",
+        "onyx",
+    ]
     args = parser.parse_args()
     config = yaml.load(open(args.training_config, 'r').read(), yaml.Loader)
 
@@ -719,13 +781,16 @@ if __name__ == '__main__':
         n_current_samples = len(os.listdir(positive_train_output_dir))
         if n_current_samples <= 0.95*config["n_samples"]:
             generate_samples(
-                text=config["target_phrase"],
+                text=config["target_phrase"][0],
                 max_samples=config["n_samples"]-n_current_samples,
                 output_dir=positive_train_output_dir,
                 voice_models=voice_models,
+                openai_models=openai_models,
                 length_scales=length_scales,
                 noise_scales=noise_scales,
-                noise_ws=noise_ws
+                noise_ws=noise_ws,
+                speed_scales=speed_scales,
+                create_positive_samples=True
             )
             torch.cuda.empty_cache()
         else:
@@ -738,13 +803,16 @@ if __name__ == '__main__':
         n_current_samples = len(os.listdir(positive_test_output_dir))
         if n_current_samples <= 0.95*config["n_samples_val"]:
             generate_samples(
-                text=config["target_phrase"],
+                text=config["target_phrase"][0],
                 max_samples=config["n_samples_val"]-n_current_samples,
                 output_dir=positive_test_output_dir,
                 voice_models=voice_models,
+                openai_models=openai_models,
                 length_scales=length_scales,
                 noise_scales=noise_scales,
-                noise_ws=noise_ws
+                noise_ws=noise_ws,
+                speed_scales=speed_scales,
+                create_positive_samples=True
             )
             torch.cuda.empty_cache()
         else:
@@ -768,9 +836,12 @@ if __name__ == '__main__':
                 max_samples=config["n_samples"]-n_current_samples,
                 output_dir=negative_train_output_dir,
                 voice_models=voice_models,
+                openai_models=openai_models,
                 length_scales=length_scales,
                 noise_scales=noise_scales,
-                noise_ws=noise_ws
+                noise_ws=noise_ws,
+                speed_scales=speed_scales,
+                create_positive_samples=False
             )
             torch.cuda.empty_cache()
         else:
@@ -794,9 +865,12 @@ if __name__ == '__main__':
                 max_samples=config["n_samples_val"]-n_current_samples,
                 output_dir=negative_test_output_dir,
                 voice_models=voice_models,
+                openai_models=openai_models,
                 length_scales=length_scales,
                 noise_scales=noise_scales,
-                noise_ws=noise_ws
+                noise_ws=noise_ws,
+                speed_scales=speed_scales,
+                create_positive_samples=False
             )
             torch.cuda.empty_cache()
         else:
