@@ -917,17 +917,17 @@ if __name__ == '__main__':
         else:
             logging.warning(f"Skipping generation of negative clips for testing, as ~{config['n_samples_val']} already exist")
 
-    # Validate positive clips
-    positive_clips = validate_dataset(positive_train_output_dir)
-    validate_dataset(positive_test_output_dir)
-    if len(positive_clips) == 0:
-        raise ValueError(f"No valid audio files found in {positive_train_output_dir}")
+        # Validate positive clips
+        positive_clips = validate_dataset(positive_train_output_dir)
+        validate_dataset(positive_test_output_dir)
+        if len(positive_clips) == 0:
+            raise ValueError(f"No valid audio files found in {positive_train_output_dir}")
 
-    # Validate negative clips
-    negative_clips = validate_dataset(negative_train_output_dir)
-    validate_dataset(negative_test_output_dir)
-    if len(negative_clips) == 0:
-        raise ValueError(f"No valid audio files found in {negative_train_output_dir}")
+        # Validate negative clips
+        negative_clips = validate_dataset(negative_train_output_dir)
+        validate_dataset(negative_test_output_dir)
+        if len(negative_clips) == 0:
+            raise ValueError(f"No valid audio files found in {negative_train_output_dir}")
 
     # Set the total length of the training clips based on the ~median generated clip duration, rounding to the nearest 1000 samples
     # and setting to 32000 when the median + 750 ms is close to that, as it's a good default value
