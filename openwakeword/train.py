@@ -153,7 +153,8 @@ class Model(nn.Module):
         # Make simple model for export based on model structure
         if self.n_classes == 1:
             # Save ONNX model
-            torch.onnx.export(self.model.to("cpu"), torch.rand(self.input_shape)[None, ], output_path,
+            torch.onnx.export(self.model.to("cpu"), torch.rand(self.input_shape)[None, ],
+                              output_path,
                               output_names=[class_mapping])
 
         elif self.n_classes >= 1:
@@ -951,63 +952,71 @@ if __name__ == '__main__':
 
     # Do Data Augmentation
     if args.augment_clips is True:
-        if not os.path.exists(os.path.join(feature_save_dir, "positive_features_train.npy")) or args.overwrite is True:
-            positive_clips_train = [str(i) for i in Path(positive_train_output_dir).glob("*.wav")]*config["augmentation_rounds"]
-            positive_clips_train_generator = augment_clips(positive_clips_train, total_length=config["total_length"],
-                                                           batch_size=config["augmentation_batch_size"],
-                                                           background_clip_paths=background_paths,
-                                                           RIR_paths=rir_paths)
+        # Define feature configurations
+        feature_configs = {
+            "positive_train": {
+                "output_file": os.path.join(feature_save_dir, "positive_features_train.npy"),
+                "input_dir": positive_train_output_dir,
+                "desc": "positive train"
+            },
+            "negative_train": {
+                "output_file": os.path.join(feature_save_dir, "negative_features_train.npy"),
+                "input_dir": negative_train_output_dir,
+                "desc": "negative train"
+            },
+            "positive_test": {
+                "output_file": os.path.join(feature_save_dir, "positive_features_test.npy"),
+                "input_dir": positive_test_output_dir,
+                "desc": "positive test"
+            },
+            "negative_test": {
+                "output_file": os.path.join(feature_save_dir, "negative_features_test.npy"),
+                "input_dir": negative_test_output_dir,
+                "desc": "negative test"
+            }
+        }
 
-            positive_clips_test = [str(i) for i in Path(positive_test_output_dir).glob("*.wav")]*config["augmentation_rounds"]
-            positive_clips_test_generator = augment_clips(positive_clips_test, total_length=config["total_length"],
-                                                          batch_size=config["augmentation_batch_size"],
-                                                          background_clip_paths=background_paths,
-                                                          RIR_paths=rir_paths)
+        # Set up compute resources
+        n_cpus = max(os.cpu_count() // 2, 1) if os.cpu_count() is not None else 1
+        device = "gpu" if torch.cuda.is_available() else "cpu"
+        ncpu = n_cpus if device == "cpu" else 1
 
-            negative_clips_train = [str(i) for i in Path(negative_train_output_dir).glob("*.wav")]*config["augmentation_rounds"]
-            negative_clips_train_generator = augment_clips(negative_clips_train, total_length=config["total_length"],
-                                                           batch_size=config["augmentation_batch_size"],
-                                                           background_clip_paths=background_paths,
-                                                           RIR_paths=rir_paths)
+        # Process each feature type
+        for feature_type, config_data in feature_configs.items():
+            try:
+                if not os.path.exists(config_data["output_file"]) or args.overwrite:
+                    logging.info(f"Processing {config_data['desc']} features...")
+                    
+                    # Generate clips
+                    clips = [str(i) for i in Path(config_data["input_dir"]).glob("*.wav")] * config["augmentation_rounds"]
+                    if not clips:
+                        logging.warning(f"No WAV files found in {config_data['input_dir']}")
+                        continue
 
-            negative_clips_test = [str(i) for i in Path(negative_test_output_dir).glob("*.wav")]*config["augmentation_rounds"]
-            negative_clips_test_generator = augment_clips(negative_clips_test, total_length=config["total_length"],
-                                                          batch_size=config["augmentation_batch_size"],
-                                                          background_clip_paths=background_paths,
-                                                          RIR_paths=rir_paths)
+                    # Create generator
+                    generator = augment_clips(
+                        clips,
+                        total_length=config["total_length"],
+                        batch_size=config["augmentation_batch_size"],
+                        background_clip_paths=background_paths,
+                        RIR_paths=rir_paths
+                    )
 
-            # Compute features and save to disk via memmapped arrays
-            logging.info("#"*50 + "\nComputing openwakeword features for generated samples\n" + "#"*50)
-            n_cpus = os.cpu_count()
-            if n_cpus is None:
-                n_cpus = 1
-            else:
-                n_cpus = n_cpus//2
-            compute_features_from_generator(positive_clips_train_generator, n_total=len(os.listdir(positive_train_output_dir)),
-                                            clip_duration=config["total_length"],
-                                            output_file=os.path.join(feature_save_dir, "positive_features_train.npy"),
-                                            device="gpu" if torch.cuda.is_available() else "cpu",
-                                            ncpu=n_cpus if not torch.cuda.is_available() else 1)
-
-            compute_features_from_generator(negative_clips_train_generator, n_total=len(os.listdir(negative_train_output_dir)),
-                                            clip_duration=config["total_length"],
-                                            output_file=os.path.join(feature_save_dir, "negative_features_train.npy"),
-                                            device="gpu" if torch.cuda.is_available() else "cpu",
-                                            ncpu=n_cpus if not torch.cuda.is_available() else 1)
-
-            compute_features_from_generator(positive_clips_test_generator, n_total=len(os.listdir(positive_test_output_dir)),
-                                            clip_duration=config["total_length"],
-                                            output_file=os.path.join(feature_save_dir, "positive_features_test.npy"),
-                                            device="gpu" if torch.cuda.is_available() else "cpu",
-                                            ncpu=n_cpus if not torch.cuda.is_available() else 1)
-
-            compute_features_from_generator(negative_clips_test_generator, n_total=len(os.listdir(negative_test_output_dir)),
-                                            clip_duration=config["total_length"],
-                                            output_file=os.path.join(feature_save_dir, "negative_features_test.npy"),
-                                            device="gpu" if torch.cuda.is_available() else "cpu",
-                                            ncpu=n_cpus if not torch.cuda.is_available() else 1)
-        else:
-            logging.warning("Openwakeword features already exist, skipping data augmentation and feature generation")
+                    # Compute features
+                    compute_features_from_generator(
+                        generator,
+                        n_total=len(os.listdir(config_data["input_dir"])),
+                        clip_duration=config["total_length"],
+                        output_file=config_data["output_file"],
+                        device=device,
+                        ncpu=ncpu
+                    )
+                    logging.info(f"Successfully generated {config_data['desc']} features")
+                else:
+                    logging.info(f"{config_data['desc'].capitalize()} features already exist, skipping generation")
+            except Exception as e:
+                logging.error(f"Error processing {config_data['desc']} features: {str(e)}")
+                continue
 
     # Create openwakeword model
     if args.train_model is True:
